@@ -2,7 +2,7 @@
 
 Experiment exploration tool for the Trappy-Scopes framework.
 
-<img src="./CR_the_sailor_man.png" alt="CR_the_sailor_man" style="zoom:25%;" />
+<img src="./CR_the_sailor_man.png" alt="CR_the_sailor_man" style="zoom:10%;" />
 
 
 
