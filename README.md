@@ -8,7 +8,7 @@ Experiment exploration tool for the Trappy-Scopes framework.
 
 > ### Reviews
 >
-> > "it's cte as shit"
+> > "it's cute as shit"
 > >
 > > —Monica
 
