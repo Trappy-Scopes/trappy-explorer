@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trappy-explorer"
+version = "0.1.0"
+description = "Experiment exploration tool for the Trappy-Scopes framework."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Yatharth Bhasin", email = "yatharth.bhasin@gimm.pt" }]
+dependencies = [
+    "pyyaml>=6.0",
+    "pandas>=1.5",
+    "rich>=13.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Trappy-Scopes/trappy-explorer"
+Documentation = "https://trappy-scopes.github.io/trappyscopes/expframework/"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools]
+packages = ["explorer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
