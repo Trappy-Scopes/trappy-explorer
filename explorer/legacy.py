@@ -12,6 +12,16 @@ have been applied (each marked ``# LEGACY-FIX``). The API, naming and
 structure are otherwise preserved verbatim. New work belongs in
 ``explorer.explorer.Explorer``, not here.
 
+The one deliberate *extension* is ``extended_parse`` (see ``read_yaml``). Legacy
+safemode maps every unknown YAML tag to ``None``, which silently drops the numpy
+scalars and tuples that the framework writes into measurement payloads --
+``density: !!python/object/apply:numpy._core.multiarray.scalar`` becomes
+``None`` and nobody notices. ``extended_parse=True`` resolves those tags for
+real. It is opt-in precisely because it breaks legacy fidelity: values that a
+legacy read reported as ``None`` come back as actual numbers, so two reads of
+the same file no longer agree. Use it when you want the data; leave it off when
+you want to reproduce what the original explorer saw.
+
 Fixes applied relative to the original paste:
   1. ``notexpfiles`` was filtered from the already-filtered list, so the
      "no logs" warning could never fire.
@@ -22,6 +32,9 @@ Fixes applied relative to the original paste:
      streams, so ``__repr__`` raised ``KeyError`` for the others.
   4. ``get_converted_dir(eid=...)`` ignored its argument.
   5. The bare ``except:`` around YAML parsing swallowed real errors.
+  6. An experiment with no ``results``/``events`` keys (a run aborted before its
+     first measurement) raised ``KeyError`` from outside the try/except, so a
+     single bad directory made an entire folder unreadable.
 """
 
 import os
@@ -92,22 +105,48 @@ class ExpExplorer:
                 current_level['files'].append(filename)
         return file_tree
 
-    def create_superset(parentdir):
+    def create_superset(parentdir, safemode=True, extended_parse=False):
         """
         Create a dataset object using all the folders in the parentdir.
         parentdir: valid directory containing Trappy-Scopes experiments.
+        extended_parse: see `read_yaml` -- resolves numpy/tuple payloads and
+        breaks legacy fidelity.
         """
         all_dirs = os.listdir(parentdir)
         all_exps = [os.path.join(parentdir, dir_) for dir_ in all_dirs if dir_ != ".DS_Store"]  ## Remove DS store
         all_exps = [dir_ for dir_ in all_exps if os.path.isdir(dir_)]  ## Remove files, only retain directories
         ## Build ExpExplorer object -> This will filter for the invalid experiments automatically.
-        return ExpExplorer(all_exps)
+        return ExpExplorer(all_exps, safemode=safemode, extended_parse=extended_parse)
 
-    def read_yaml(exp, safemode=True):
+    def read_yaml(exp, safemode=True, extended_parse=False):
         """
         Parse the given yaml file.
+
         safemode: Opens the file in safe mode: ignore all complex serialised objects that require knowledge
         of their constructors.
+
+        extended_parse: Resolve the serialised python/numpy objects instead of
+        discarding them. This is an *extension*, not legacy behaviour -- it
+        deliberately breaks legacy mode, and it takes precedence over
+        ``safemode``.
+
+        Why it exists: the framework writes measurement payloads through numpy,
+        so values land in the log as ``!!python/object/apply:numpy._core.multiarray.scalar``
+        (with a ``!!python/object/apply:numpy.dtype`` argument and a ``!!binary``
+        payload), and multi-channel readings land as ``!!python/tuple``. Legacy
+        safemode maps every tag it does not know to ``None``, so those values are
+        silently lost -- a `density` column reads as all-empty and nothing warns
+        you. With ``extended_parse=True`` they come back as real floats and
+        tuples.
+
+        The cost, and the reason it is off by default: resolving these tags means
+        running the constructors named in the file, so (a) the parse is only as
+        trustworthy as the file -- never point it at an experiment directory you
+        did not produce -- and (b) a tag whose module is not importable in this
+        environment cannot be resolved. numpy 2.x writes ``numpy._core.*`` and
+        numpy 1.x writes ``numpy.core.*``; reading the other era's logs needs the
+        matching numpy, so unresolvable tags fall back to ``None`` with a warning
+        rather than killing the parse.
         """
         class SafeLoaderIgnoreTags(yaml.SafeLoader):
             def ignore_unknown(self, node):
@@ -115,17 +154,48 @@ class ExpExplorer:
         # Register the fallback handler for all unknown tags
         SafeLoaderIgnoreTags.add_constructor(None, SafeLoaderIgnoreTags.ignore_unknown)
 
+        class ExtendedLoader(yaml.UnsafeLoader):
+            """Full constructor support, but a bad tag degrades instead of raising."""
+            unresolved = set()
+
+            def unresolved_tag(self, node):
+                ExtendedLoader.unresolved.add(node.tag)
+                return None
+
+        ExtendedLoader.add_constructor(None, ExtendedLoader.unresolved_tag)
+
         with open(exp, "r") as file:
-            if safemode:
+            if extended_parse:
+                ExtendedLoader.unresolved = set()
+                try:
+                    all_ = yaml.load(file, Loader=ExtendedLoader)
+                except Exception as err:
+                    ## A constructor blew up mid-document -- fall back rather than
+                    ## lose the whole experiment, and say so loudly.
+                    print(f"[yellow]extended_parse failed on {exp} ({err!r}); "
+                          f"falling back to legacy safemode for this file.[default]")
+                    file.seek(0)
+                    return yaml.load(file, Loader=SafeLoaderIgnoreTags)
+                if ExtendedLoader.unresolved:
+                    print(f"[yellow]extended_parse could not resolve these tags in {exp} "
+                          f"(values are None): {sorted(ExtendedLoader.unresolved)}[default]")
+                return all_
+            elif safemode:
                 all_ = yaml.load(file, Loader=SafeLoaderIgnoreTags)
             else:
                 all_ = yaml.load(file, Loader=yaml.Loader)
             return all_
 
-    def __init__(self, datadirs, safemode=True):
+    def __init__(self, datadirs, safemode=True, extended_parse=False):
         """
         datafiles : experiment directories (not experiment.yaml file).
+        extended_parse : resolve serialised numpy/python payloads instead of
+        dropping them. See `read_yaml` -- this breaks legacy fidelity on purpose,
+        so it is recorded on the instance as `self.extended_parse` to make it
+        obvious later which way a given object was loaded.
         """
+
+        self.extended_parse = extended_parse
 
         self.data = {}
         self.all = {}
@@ -157,7 +227,8 @@ class ExpExplorer:
             print(f"Experiment: {i}")
             eid = None
             try:
-                yaml_content = ExpExplorer.read_yaml(expfilename, safemode=safemode)
+                yaml_content = ExpExplorer.read_yaml(expfilename, safemode=safemode,
+                                                     extended_parse=extended_parse)
                 eid = yaml_content["eid"]
                 print(f"eid: {eid}, path: {expfilename}")
             except Exception as err:  ## LEGACY-FIX (5): don't swallow the error silently
@@ -204,16 +275,21 @@ class ExpExplorer:
         updates the internal datastructures of this object.
         """
         self.data[eid] = {}
-        self.data[eid]["results"] = datadict["results"]
-        self.data[eid]["events"] = datadict["events"]
+        ## LEGACY-FIX (6): a run that was aborted before its first measurement has no
+        ## `results`/`events` keys at all. Indexing them raised KeyError from *outside*
+        ## the try/except in __init__, which killed the whole constructor -- one bad
+        ## directory made a whole folder unreadable. Default to empty lists instead.
+        self.data[eid]["results"] = datadict.get("results") or []
+        self.data[eid]["events"] = datadict.get("events") or []
         self.data[eid]["filetree"] = ExpExplorer.build_file_tree(self.datadir_map[eid])
         self.data[eid]["m_streams"] = []  ## LEGACY-FIX (3): always present, so __repr__ is safe
-        datadict.pop("results")
-        datadict.pop("events")
+        datadict.pop("results", None)
+        datadict.pop("events", None)
         self.data[eid]["metadata"] = datadict  ## Rest of the dictionary
 
     def __repr__(self):
-        text = f"<Experiments :: {len(self.data)}  datasets>\n"
+        mode = " [extended_parse]" if getattr(self, "extended_parse", False) else ""
+        text = f"<Experiments :: {len(self.data)}  datasets{mode}>\n"
         for eid, v in self.data.items():
             text += f"  |- eid: {eid}\n"
             if self.data[eid]["m_streams"]:
