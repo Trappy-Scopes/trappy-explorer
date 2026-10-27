@@ -22,7 +22,7 @@ Tool to explore a Trappy-Scopes experiment. The expeimentation framework is expl
 pip install -e ".[dev]"
 ```
 
-Runtime dependencies: `pyyaml`, `pandas`, `rich`.
+Runtime dependencies: `pyyaml`, `pandas`, `rich`, `nanoid`.
 
 ## Layout
 
@@ -33,11 +33,21 @@ trappy-explorer/
 │   ├── __init__.py     # exports Explorer, ExpExplorer (= LegacyExplorer), ExpReport
 │   ├── explorer.py     # current interface — under development
 │   ├── legacy.py       # frozen original implementation (ExpExplorer)
-│   └── report.py       # Markdown / HTML / PDF reports (ExpReport)
+│   ├── report.py       # Markdown / HTML / PDF reports (ExpReport)
+│   └── uid.py          # uid(): a new id in the eid format (10 hex chars, NanoID)
 └── tests/
     ├── conftest.py     # synthetic experiment-directory fixtures
     ├── test_legacy.py  # smoke tests for the legacy explorer
-    └── test_report.py  # tests for the report renderer
+    ├── test_report.py  # tests for the report renderer
+    └── test_uid.py     # ids match the eid format
+```
+
+`uid()` is the generator the scopes use (`trappyscopes/core/uid.py`), so an
+analysis can be given an id of the same kind as the experiments it reads:
+
+```python
+from explorer import uid
+uid()                     # '3f9a0c1e7b'
 ```
 
 ### Legacy explorer
