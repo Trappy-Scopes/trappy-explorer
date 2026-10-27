@@ -12,12 +12,16 @@ EXPERIMENT_YAML = textwrap.dedent(
       - eid: EXP-0001
         scopeid: scope-a
         exptime: 1.0
-        name: temperature
+        type: measurement
+        measureid: m-temp
+        measureidx: 0
         value: 21.5
       - eid: EXP-0001
         scopeid: scope-a
         exptime: 2.0
-        name: temperature
+        type: measurement
+        measureid: m-temp
+        measureidx: 1
         value: 21.7
     events:
       - eid: EXP-0001
@@ -30,6 +34,8 @@ EXPERIMENT_YAML = textwrap.dedent(
         exptime: 0.5
         type: measurement_stream
         name: temperature
+        measureid: m-temp
+        measurements: [value]
     """
 ).strip()
 

@@ -81,6 +81,11 @@ class ExpExplorer:
          x
     """
 
+    #: What the most recent `read_yaml` actually did -- the requested mode is not
+    #: always the mode you get (LEGACY-FIX 7).
+    last_parse = {"mode": "unknown", "unresolved": []}
+
+    #: {eid: last_parse} for every experiment this object loaded.
     def build_file_tree(root_dir):
         """
         Returns the file
@@ -164,6 +169,32 @@ class ExpExplorer:
 
         ExtendedLoader.add_constructor(None, ExtendedLoader.unresolved_tag)
 
+        ## LEGACY-FIX (7): degrade per *node*, not per document. One
+        ## unconstructible value -- `!!python/name:__main__.filename_fn`, a
+        ## function reference from the acquisition script -- used to raise out of
+        ## the whole parse, so the file silently fell back to safemode and every
+        ## numpy payload in it read as None. These wrappers try the real
+        ## constructor first, so numpy scalars still resolve, and only the node
+        ## that actually fails becomes None.
+        def _degrading(method_name):
+            base = getattr(yaml.UnsafeLoader, method_name)
+
+            def construct(loader, suffix, node):
+                try:
+                    return base(loader, suffix, node)
+                except Exception:
+                    ExtendedLoader.unresolved.add(node.tag)
+                    return None
+            return construct
+
+        for _prefix, _method in (
+                ("tag:yaml.org,2002:python/name:", "construct_python_name"),
+                ("tag:yaml.org,2002:python/module:", "construct_python_module"),
+                ("tag:yaml.org,2002:python/object:", "construct_python_object"),
+                ("tag:yaml.org,2002:python/object/apply:", "construct_python_object_apply"),
+                ("tag:yaml.org,2002:python/object/new:", "construct_python_object_new")):
+            ExtendedLoader.add_multi_constructor(_prefix, _degrading(_method))
+
         with open(exp, "r") as file:
             if extended_parse:
                 ExtendedLoader.unresolved = set()
@@ -175,12 +206,17 @@ class ExpExplorer:
                     print(f"[yellow]extended_parse failed on {exp} ({err!r}); "
                           f"falling back to legacy safemode for this file.[default]")
                     file.seek(0)
+                    ExpExplorer.last_parse = {"mode": "safemode (extended_parse failed)",
+                                              "unresolved": [repr(err)]}
                     return yaml.load(file, Loader=SafeLoaderIgnoreTags)
+                ExpExplorer.last_parse = {"mode": "extended_parse",
+                                          "unresolved": sorted(ExtendedLoader.unresolved)}
                 if ExtendedLoader.unresolved:
                     print(f"[yellow]extended_parse could not resolve these tags in {exp} "
                           f"(values are None): {sorted(ExtendedLoader.unresolved)}[default]")
                 return all_
             elif safemode:
+                ExpExplorer.last_parse = {"mode": "legacy safemode", "unresolved": []}
                 all_ = yaml.load(file, Loader=SafeLoaderIgnoreTags)
             else:
                 all_ = yaml.load(file, Loader=yaml.Loader)
@@ -196,6 +232,7 @@ class ExpExplorer:
         """
 
         self.extended_parse = extended_parse
+        self.parse_notes = {}
 
         self.data = {}
         self.all = {}
@@ -238,6 +275,7 @@ class ExpExplorer:
                 continue
 
             ## Update indexes
+            self.parse_notes[eid] = dict(ExpExplorer.last_parse)
             self.eidlist.append(eid)
             self.expmap[expfilename] = eid
             self.datadir_map[eid] = datadir  ## Save a map of eid: absolute_path_to_dataset_directory

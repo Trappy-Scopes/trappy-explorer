@@ -21,9 +21,30 @@ Documentation = "https://trappy-scopes.github.io/trappyscopes/expframework/"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# explorer/report.py -- moved here from trappyscopes' expframework on
+# 2026-09-15 and rewritten on the same day to read an ExpExplorer by
+# composition. Markdown output needs nothing beyond the runtime deps; HTML
+# needs markdown-it-py; stream plots need matplotlib (absent simply means no
+# figure, not no report). PDF goes through the `pandoc` binary and a LaTeX
+# engine (xelatex or pdflatex), which are system dependencies, not pip ones --
+# `to_pdf()` says so by name when they are missing.
+#
+# The original reportlab + html2rml + pypandoc stack is gone: html2rml emits
+# RML, which only ReportLab's commercial RML2PDF consumes, so that path could
+# never have rendered. See the module docstring.
+report = [
+    "markdown-it-py>=3.0",
+    "matplotlib>=3.5",
+]
 
 [tool.setuptools]
 packages = ["explorer"]
+
+# The header-band logos are loaded from explorer/assets at render time, so they
+# have to be installed alongside the module -- the original's absolute path to
+# a file outside its own tree is what stopped working.
+[tool.setuptools.package-data]
+explorer = ["assets/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
